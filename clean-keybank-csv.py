@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 import csv
+import functools
 import re
 import sys
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Collection
 from datetime        import datetime
+from functools       import cached_property
 from io              import StringIO
 from typing          import TextIO
 
 
-REQUIRED_COLUMNS: list[str] = ["Date", "Description", "Amount", "Ref.#"]
-
-
 class MissingRequiredColumnsError(Exception):
     pass
-
-
-type Transaction = dict[str, str]
 
 
 def main() -> None:
@@ -30,42 +26,63 @@ def main() -> None:
         output_file = sys.argv[2]
 
     try:
-        transactions = read_transactions(input_file, required_columns=REQUIRED_COLUMNS)
-        cleaned_transactions = (fix_transaction_date(transaction) for transaction in transactions)
+        transactions = read_transactions(input_file, required_columns=Transaction.KEY_COLUMNS)
         write_transactions(
-            cleaned_transactions, output_file=output_file, column_names=REQUIRED_COLUMNS
+            sorted(transactions, reverse=True),
+            output_file=output_file,
+            column_names=Transaction.KEY_COLUMNS
         )
     except MissingRequiredColumnsError as e:
         print(f"{input_file} is not a valid KeyBank CSV file.", file=sys.stderr)
         sys.exit(1)
 
 
-def fix_transaction_date(transaction: Transaction) -> Transaction:
+@functools.total_ordering
+class Transaction(dict[str, str]):
     """
-    Convert a transaction record's "Date" field from MM/DD/YYYY to
-    YYYY-MM-DD. If the transaction does not have a date field, or its
-    format does not match MM/DD/YYYY, it will be returned unchanged.
-
-    Note that this function does not attempt to distinguish between
-    MM/DD/YYYY dates and DD/MM/YYYY dates, so it will treat the latter
-    as if they were the former. This may result in a ValueError
-    exception being raised for DD/MM/YYYY dates.
-
-    Args:
-        transaction (Transaction): The transaction record to fix.
-
-    Returns:
-        Transaction: The fixed transaction record.
+    A transaction record, represented as a dictionary with string keys
+    and values. This class is used to represent a single transaction
+    read from a KeyBank CSV file.
     """
-    date = transaction.get("Date", "").strip()
-    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", date) is None:
-        return transaction
 
-    date = datetime.strptime(date, "%m/%d/%Y")
-    return transaction | {"Date": date.strftime("%Y-%m-%d")}
+    KEY_COLUMNS: tuple[str, ...] = ("Date", "Description", "Amount", "Ref.#")
+
+    def __init__(self, attrs: dict[str, str] | None = None) -> None:
+        attrs = attrs or {}
+        if "Date" in attrs:
+            attrs = attrs | {"Date": self.iso_date(attrs["Date"])}
+        super().__init__(attrs)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Transaction):
+            return NotImplemented
+
+        return self._index == other._index
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Transaction):
+            return NotImplemented
+
+        return self._index < other._index
+
+    @classmethod
+    def iso_date(cls, raw_date: str) -> str:
+        """
+        Return the given date in ISO format (YYYY-MM-DD).
+        If the date is not in the expected format, return an empty string.
+        """
+        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", raw_date) is None:
+            return raw_date
+
+        date = datetime.strptime(raw_date, "%m/%d/%Y")
+        return date.strftime("%Y-%m-%d")
+
+    @cached_property
+    def _index(self) -> tuple[str, ...]:
+        return tuple([self[key] for key in self.KEY_COLUMNS])
 
 
-def read_transactions(input_file: str, required_columns: list[str]) -> list[Transaction]:
+def read_transactions(input_file: str, required_columns: Collection[str]) -> list[Transaction]:
     """
     Read transactions from a CSV file.
 
@@ -77,7 +94,7 @@ def read_transactions(input_file: str, required_columns: list[str]) -> list[Tran
 
     Args:
         input_file (str): The path to the input CSV file.
-        required_columns (list[str]): A list of required column names.
+        required_columns (Collection[str]): A collection of required column names.
 
     Returns:
         list[Transaction]: A list of transactions read from the file.
@@ -85,13 +102,13 @@ def read_transactions(input_file: str, required_columns: list[str]) -> list[Tran
     with open(input_file, mode="r") as input:
         column_names = read_column_names_from_file(input, required_columns=required_columns)
         reader = csv.DictReader(input, fieldnames=column_names)
-        return [transaction for transaction in reader]
+        return [Transaction(transaction) for transaction in reader]
 
 
 def write_transactions(
     transactions: Iterable[Transaction],
     output_file:  str,
-    column_names: list[str]
+    column_names: Collection[str]
 ) -> None:
     """
     Write transactions to a CSV file.
@@ -99,7 +116,7 @@ def write_transactions(
     Args:
         transactions (Iterable[Transaction]): The transactions to write.
         output_file (str): The path to the output CSV file.
-        column_names (list[str]): A list of column names to include in the output.
+        column_names (Collection[str]): A collection of column names to include in the output.
     """
     with open(output_file, mode="w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=column_names, extrasaction="ignore")
