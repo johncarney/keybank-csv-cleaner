@@ -123,9 +123,10 @@ def read_column_names_from_file(file: TextIO, required_columns: list[str]) -> li
     Returns:
         list[str]: The column names found in the file.
     """
+    column_set = frozenset(required_columns)
     for row in file:
         column_names = parse_csv_row(row)
-        if set(column_names).issuperset(required_columns):
+        if column_set.issubset(column_names):
             return column_names
 
     raise MissingRequiredColumnsError("No valid column names found in the file.")
