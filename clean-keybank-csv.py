@@ -52,7 +52,9 @@ def write_transactions(
     with open(output_file, mode="w", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=column_names, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows((transaction.data for transaction in transactions))
+        writer.writerows(
+            (transaction.data for transaction in transactions if not transaction.is_blank)
+        )
 
 
 @functools.total_ordering
@@ -76,8 +78,12 @@ class Transaction:
         return self._index < other._index
 
     @cached_property
+    def is_blank(self) -> bool:
+        return all(value == "" for value in self._index)
+
+    @cached_property
     def _index(self) -> tuple[str, ...]:
-        return tuple([self.data[key] for key in self.KEY_COLUMNS])
+        return tuple([self.data.get(key, "").strip() for key in self.KEY_COLUMNS])
 
 
 class TransactionReader:
@@ -113,8 +119,8 @@ class TransactionReader:
     def __next__(self) -> Transaction:
         column_count = len(self.column_names)
 
-        row = next(self._reader)[:column_count]
-        transaction = dict(zip_longest(self.column_names, row, fillvalue=""))
+        row = next(self._reader)
+        transaction = dict(zip_longest(self.column_names, row[:column_count], fillvalue=""))
         if self.date_column in transaction:
             transaction[self.date_column] = self.iso_date(transaction[self.date_column])
         return Transaction(transaction)
