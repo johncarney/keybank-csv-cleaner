@@ -169,14 +169,15 @@ class KeyBankTransactionReader:
     @staticmethod
     def iso_date(raw_date: str) -> str:
         """
-        Convert a date string in MM/DD/YYYY format to ISO format (YYYY-MM-DD).
-        If the date is not in the expected format, return it unchanged.
-        """
-        if re.fullmatch(r"\d{2}/\d{2}/\d{4}", raw_date) is None:
-            return raw_date
+        Converts a date string in MM/DD/YYYY format to ISO format
+        (YYYY-MM-DD). If the date is not in the expected format, returns
+        it unchanged.
 
-        date = datetime.strptime(raw_date, "%m/%d/%Y")
-        return date.strftime("%Y-%m-%d")
+        Note that this function does not attempt to distinguish between
+        MM/DD/YYYY and DD/MM/YYYY dates and will treat the later as if
+        they were the former.
+        """
+        return re.sub(r"\A\s*(\d{2})/(\d{2})/(\d{4})\s*\Z", r"\3-\1-\2", raw_date)
 
 
 if __name__ == "__main__":
