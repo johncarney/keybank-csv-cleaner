@@ -26,26 +26,31 @@ def main() -> None:
     if len(sys.argv) > 2:
         output_file = sys.argv[2]
 
+    required_columns = KeyBankTransaction.KEY_COLUMNS
+
     try:
-        transactions = read_transactions(input_file, required_columns=Transaction.KEY_COLUMNS)
+        transactions = read_transactions(input_file, required_columns=required_columns)
         write_transactions(
             sorted(transactions, reverse=True),
             output_file=output_file,
-            column_names=Transaction.KEY_COLUMNS
+            column_names=required_columns
         )
     except MissingRequiredColumnsError as e:
         print(f"{input_file} is not a valid KeyBank CSV file.", file=sys.stderr)
         sys.exit(1)
 
 
-def read_transactions(input_file: str, required_columns: Collection[str]) -> list["Transaction"]:
+def read_transactions(
+    input_file:       str,
+    required_columns: Collection[str]
+) -> list["KeyBankTransaction"]:
     with open(input_file, mode="r") as input:
-        reader = TransactionReader(input, required_columns=required_columns)
+        reader = KeyBankTransactionReader(input, required_columns=required_columns)
         return list(reader)
 
 
 def write_transactions(
-    transactions: Iterable["Transaction"],
+    transactions: Iterable["KeyBankTransaction"],
     output_file:  str,
     column_names: Collection[str]
 ) -> None:
@@ -58,7 +63,7 @@ def write_transactions(
 
 
 @functools.total_ordering
-class Transaction:
+class KeyBankTransaction:
     KEY_COLUMNS: tuple[str, ...] = ("Date", "Description", "Amount", "Ref.#")
     DATE_COLUMN: str             = "Date"
 
@@ -66,13 +71,13 @@ class Transaction:
         self.data = data or {}
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Transaction):
+        if not isinstance(other, KeyBankTransaction):
             return NotImplemented
 
         return self._index == other._index
 
     def __lt__(self, other: object) -> bool:
-        if not isinstance(other, Transaction):
+        if not isinstance(other, KeyBankTransaction):
             return NotImplemented
 
         return self._index < other._index
@@ -86,12 +91,33 @@ class Transaction:
         return tuple([self.data.get(key, "").strip() for key in self.KEY_COLUMNS])
 
 
-class TransactionReader:
+class KeyBankTransactionReader:
+    """
+    A CSV reader for KeyBank transaction files that ensures required
+    columns are present and converts date formats to ISO format.
+
+    Required columns are specified by the `required_columns` parameter,
+    and the date column is specified by the `date_column` parameter.
+
+    If the required columns are not found in the file, a
+    MissingRequiredColumnsError is raised. The date in the specified
+    date column is converted from MM/DD/YYYY format to ISO format
+    (YYYY-MM-DD).
+
+    Example usage:
+
+    ```python
+    with open("transactions.csv", mode="r") as input_file:
+        reader = TransactionReader(input_file)
+        for transaction in reader:
+            print(transaction)
+    ```
+    """
     def __init__(
         self,
         input_io:         IO,
-        required_columns: Collection[str] = Transaction.KEY_COLUMNS,
-        date_column:      str = Transaction.DATE_COLUMN
+        required_columns: Collection[str] = KeyBankTransaction.KEY_COLUMNS,
+        date_column:      str = KeyBankTransaction.DATE_COLUMN
     ) -> None:
         self.input_io = input_io
         self.required_columns = required_columns
@@ -103,6 +129,21 @@ class TransactionReader:
 
     @cached_property
     def column_names(self) -> list[str]:
+        """
+        Return the column names from the CSV file.
+
+        Each line of the file is read until a header row containing all
+        required columns is found. If no such header is found, a
+        MissingRequiredColumnsError is raised. The header row may
+        contain additional columns beyond the required ones and the
+        columns do not need to be in any particular order.
+
+        Returns:
+            list[str]: A list of column names from the CSV file.
+
+        Raises:
+            MissingRequiredColumnsError: If the required columns are not found in the file.
+        """
         column_set = frozenset(self.required_columns)
         for row in self._reader:
             if column_set.issubset(row):
@@ -110,20 +151,20 @@ class TransactionReader:
 
         raise MissingRequiredColumnsError("Required columns not found in the file.")
 
-    def dialect(self):
-        return self._reader.dialect
-
-    def line_num(self):
-        return self._reader.line_num
-
-    def __next__(self) -> Transaction:
+    def __next__(self) -> KeyBankTransaction:
         column_count = len(self.column_names)
 
         row = next(self._reader)
         transaction = dict(zip_longest(self.column_names, row[:column_count], fillvalue=""))
         if self.date_column in transaction:
             transaction[self.date_column] = self.iso_date(transaction[self.date_column])
-        return Transaction(transaction)
+        return KeyBankTransaction(transaction)
+
+    def dialect(self):
+        return self._reader.dialect
+
+    def line_num(self):
+        return self._reader.line_num
 
     @staticmethod
     def iso_date(raw_date: str) -> str:
